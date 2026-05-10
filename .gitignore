@@ -29,3 +29,6 @@ Thumbs.db
 # Nix
 result
 result-*
+
+# Kotlin Language Server
+kls_database.db
