@@ -21,16 +21,12 @@ class TabListPacketListener(
                 WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER in actions
         if (!touchesDisplayName) return
 
-        var changed = false
         for (entry in wrapper.entries) {
-            val cached = state.displayNameFor(entry.profileId) ?: continue
-            if (entry.displayName !== cached) {
-                entry.displayName = cached
-                changed = true
+            val expected = state.displayNameFor(entry.profileId) ?: continue
+            if (entry.displayName != expected) {
+                event.isCancelled = true
+                return
             }
-        }
-        if (changed) {
-            event.markForReEncode(true)
         }
     }
 }
