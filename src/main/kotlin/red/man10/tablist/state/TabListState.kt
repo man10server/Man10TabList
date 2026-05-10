@@ -9,33 +9,120 @@ class TabListState(
     private val formatter: TabListFormatter,
 ) {
 
-    private val entries = ConcurrentHashMap<UUID, PlayerEntry>()
+    private val players = ConcurrentHashMap<UUID, PlayerEntry>()
+    private val serverHeaders = ConcurrentHashMap<String, ServerGroupHeader>()
+    private val overflows = ConcurrentHashMap<String, OverflowSlot>()
+
+    private val topLabels: Array<TopLabelSlot> = Array(NUM_COLUMNS) { TopLabelSlot(it) }
+    private val bottomLabels: Array<BottomLabelSlot> = Array(NUM_COLUMNS) { BottomLabelSlot(it) }
+    private val paddings: Array<PaddingSlot> = Array(TOTAL_CONTENT) { PaddingSlot(it) }
 
     fun addOrGet(uuid: UUID, username: String, serverName: String): PlayerEntry =
-        entries.computeIfAbsent(uuid) { PlayerEntry(it, username, serverName) }
+        players.computeIfAbsent(uuid) { PlayerEntry(it, username, serverName) }
 
     fun upsert(uuid: UUID, username: String, serverName: String): PlayerEntry {
-        val entry = entries.computeIfAbsent(uuid) { PlayerEntry(it, username, serverName) }
+        val entry = players.computeIfAbsent(uuid) { PlayerEntry(it, username, serverName) }
         entry.updateServerName(serverName)
         return entry
     }
 
-    fun remove(uuid: UUID): PlayerEntry? = entries.remove(uuid)
+    fun remove(uuid: UUID): PlayerEntry? = players.remove(uuid)
 
-    fun get(uuid: UUID): PlayerEntry? = entries[uuid]
+    fun get(uuid: UUID): PlayerEntry? = players[uuid]
 
     fun updateLatency(uuid: UUID, latency: Int) {
-        entries[uuid]?.let { it.latency = latency }
+        players[uuid]?.let { it.latency = latency }
     }
 
-    fun displayNameFor(uuid: UUID): Component? =
-        entries[uuid]?.computeDisplayName(formatter)
+    fun displayNameFor(uuid: UUID): Component? {
+        val player = players[uuid]
+        if (player != null) return player.computeDisplayName(formatter)
+        return null
+    }
 
-    fun snapshot(): Collection<PlayerEntry> = entries.values
+    fun playerCount(): Int = players.size
 
-    val size: Int get() = entries.size
+    fun composedSlots(): List<TabSlot> {
+        val grouped = sortedMapOf<String, MutableList<PlayerEntry>>()
+        for (entry in players.values) {
+            grouped.getOrPut(entry.serverName) { ArrayList() }.add(entry)
+        }
+        serverHeaders.keys.removeAll { it !in grouped.keys }
+        overflows.keys.removeAll { it !in grouped.keys }
+
+        val content = ArrayList<TabSlot>(TOTAL_CONTENT)
+
+        for ((server, list) in grouped) {
+            if (content.size >= TOTAL_CONTENT) break
+
+            val nextRowStart = ((content.size + NUM_COLUMNS - 1) / NUM_COLUMNS) * NUM_COLUMNS
+            while (content.size < nextRowStart && content.size < TOTAL_CONTENT) {
+                content.add(paddings[content.size])
+            }
+            if (content.size >= TOTAL_CONTENT) break
+
+            val available = TOTAL_CONTENT - content.size
+            if (available < 1) break
+
+            val header = serverHeaders.computeIfAbsent(server) { ServerGroupHeader(it) }
+            header.count = list.size
+            list.sortBy { it.username }
+
+            val needsOverflow = list.size > MAX_PLAYERS_PER_SERVER
+            val playersToAddIdeal = if (needsOverflow) MAX_PLAYERS_PER_SERVER - 1 else list.size
+            val totalNeededIdeal = 1 + playersToAddIdeal + (if (needsOverflow) 1 else 0)
+            val totalForServer = minOf(totalNeededIdeal, available)
+
+            content.add(header)
+            var addedAfterHeader = 1
+
+            val playersToAdd: Int
+            val emitOverflow: Boolean
+            if (needsOverflow && totalForServer >= MAX_CELLS_PER_SERVER) {
+                playersToAdd = MAX_PLAYERS_PER_SERVER - 1
+                emitOverflow = true
+            } else {
+                playersToAdd = totalForServer - 1
+                emitOverflow = false
+            }
+
+            for (i in 0 until playersToAdd) {
+                content.add(list[i])
+                addedAfterHeader++
+            }
+            if (emitOverflow) {
+                val overflow = overflows.computeIfAbsent(server) { OverflowSlot(it) }
+                overflow.remaining = list.size - playersToAdd
+                content.add(overflow)
+                addedAfterHeader++
+            }
+        }
+
+        while (content.size < TOTAL_CONTENT) {
+            content.add(paddings[content.size])
+        }
+
+        val result = ArrayList<TabSlot>(TOTAL_ENTRIES)
+        for (col in 0 until NUM_COLUMNS) result.add(topLabels[col])
+        result.addAll(content)
+        for (col in 0 until NUM_COLUMNS) result.add(bottomLabels[col])
+        return result
+    }
 
     fun clear() {
-        entries.clear()
+        players.clear()
+        serverHeaders.clear()
+        overflows.clear()
+    }
+
+    companion object {
+        const val NUM_COLUMNS: Int = 4
+        const val ROWS_PER_COLUMN: Int = 20
+        const val CONTENT_ROWS_PER_COLUMN: Int = ROWS_PER_COLUMN - 2
+        const val TOTAL_CONTENT: Int = NUM_COLUMNS * CONTENT_ROWS_PER_COLUMN
+        const val TOTAL_ENTRIES: Int = NUM_COLUMNS * ROWS_PER_COLUMN
+        const val MAX_ROWS_PER_SERVER: Int = 4
+        const val MAX_CELLS_PER_SERVER: Int = MAX_ROWS_PER_SERVER * NUM_COLUMNS
+        const val MAX_PLAYERS_PER_SERVER: Int = MAX_CELLS_PER_SERVER - 1
     }
 }

@@ -5,10 +5,10 @@ import red.man10.tablist.render.TabListFormatter
 import java.util.UUID
 
 class PlayerEntry internal constructor(
-    val uuid: UUID,
-    val username: String,
+    override val uuid: UUID,
+    override val username: String,
     initialServerName: String,
-) {
+) : TabSlot() {
 
     @Volatile
     var serverName: String = initialServerName
@@ -19,8 +19,7 @@ class PlayerEntry internal constructor(
         internal set
 
     @Volatile
-    var cachedDisplayName: Component? = null
-        private set
+    private var cachedDisplayName: Component? = null
 
     internal fun updateServerName(newName: String) {
         if (serverName == newName) return
@@ -28,10 +27,10 @@ class PlayerEntry internal constructor(
         cachedDisplayName = null
     }
 
-    internal fun computeDisplayName(formatter: TabListFormatter): Component {
+    override fun computeDisplayName(formatter: TabListFormatter): Component {
         var cached = cachedDisplayName
         if (cached == null) {
-            cached = formatter.format(this)
+            cached = formatter.formatPlayer(this)
             cachedDisplayName = cached
         }
         return cached
