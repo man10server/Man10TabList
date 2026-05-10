@@ -2,6 +2,7 @@ package red.man10.tablist.state
 
 import net.kyori.adventure.text.Component
 import red.man10.tablist.render.TabListFormatter
+import java.time.Instant
 import java.util.UUID
 
 class PlayerEntry internal constructor(
@@ -9,6 +10,8 @@ class PlayerEntry internal constructor(
     override val username: String,
     initialServerName: String,
 ) : TabSlot() {
+
+    val loginAt: Instant = Instant.now()
 
     @Volatile
     var serverName: String = initialServerName

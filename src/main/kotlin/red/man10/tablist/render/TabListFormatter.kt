@@ -15,7 +15,9 @@ class TabListFormatter {
         Component.text(entry.username)
 
     fun formatServerHeader(header: ServerGroupHeader): Component =
-        Component.text("${header.serverName} (${header.count}):", NamedTextColor.YELLOW, TextDecoration.BOLD)
+        Component.empty()
+            .append(Component.text(header.serverName, NamedTextColor.YELLOW, TextDecoration.UNDERLINED, TextDecoration.BOLD))
+            .append(Component.text(" (${header.count}):", NamedTextColor.WHITE))
 
     fun formatOverflow(slot: OverflowSlot): Component =
         Component.text("... and ${slot.remaining} more", NamedTextColor.GRAY, TextDecoration.ITALIC)

@@ -16,6 +16,9 @@ import red.man10.tablist.state.ServerGroupHeader
 import red.man10.tablist.state.TabListState
 import red.man10.tablist.state.TabSlot
 import red.man10.tablist.state.TopLabelSlot
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalTime
 import java.util.UUID
 
 class TabListRenderer(
@@ -47,8 +50,9 @@ class TabListRenderer(
         val composed = state.composedSlots()
         val desired = collectIds(composed)
         val footer = footerFor(state.playerCount())
+        val viewerCtx = buildViewerContext()
         for (viewer in server.allPlayers) {
-            renderFor(viewer, composed, desired, footer)
+            renderFor(viewer, composed, desired, footer, viewerCtx)
         }
     }
 
@@ -56,7 +60,35 @@ class TabListRenderer(
         val composed = state.composedSlots()
         val desired = collectIds(composed)
         val footer = footerFor(state.playerCount())
-        renderFor(viewer, composed, desired, footer)
+        val viewerCtx = buildViewerContext()
+        renderFor(viewer, composed, desired, footer, viewerCtx)
+    }
+
+    private data class ViewerContext(
+        val now: Instant,
+        val greeting: Component,
+        val time: Component,
+    )
+
+    private val greetingComponent: Component =
+        Component.text("おはまん！", NamedTextColor.AQUA)
+
+    private val serverLabel: Component =
+        Component.text("Server: ", NamedTextColor.AQUA)
+
+    private val pingLabel: Component =
+        Component.text("Ping: ", NamedTextColor.AQUA)
+
+    private val connectTimeLabel: Component =
+        Component.text("接続時間: ", NamedTextColor.AQUA)
+
+    private fun buildViewerContext(): ViewerContext {
+        val nowTime = LocalTime.now()
+        return ViewerContext(
+            now = Instant.now(),
+            greeting = greetingComponent,
+            time = Component.text(formatTime(nowTime), NamedTextColor.YELLOW),
+        )
     }
 
     private fun collectIds(composed: List<TabSlot>): Set<UUID> {
@@ -85,11 +117,14 @@ class TabListRenderer(
         composed: List<TabSlot>,
         desired: Set<UUID>,
         footer: Component,
+        ctx: ViewerContext,
     ) {
         val tabList = viewer.tabList
 
         for (i in composed.indices) {
-            applySlot(tabList, composed[i], listOrderForRowMajorIndex(i))
+            val slot = composed[i]
+            val displayName = computeDisplay(viewer, slot, ctx)
+            applySlot(tabList, slot, displayName, listOrderForRowMajorIndex(i))
         }
 
         var toRemove: ArrayList<UUID>? = null
@@ -115,8 +150,47 @@ class TabListRenderer(
         return TabListState.TOTAL_ENTRIES - (col * TabListState.ROWS_PER_COLUMN + row)
     }
 
-    private fun applySlot(tabList: TabList, slot: TabSlot, listOrder: Int) {
-        val displayName = slot.computeDisplayName(formatter)
+    private fun computeDisplay(viewer: Player, slot: TabSlot, ctx: ViewerContext): Component =
+        when (slot) {
+            is TopLabelSlot -> computeTopLabel(viewer, slot.column)
+            is BottomLabelSlot -> computeBottomLabel(viewer, slot.column, ctx)
+            else -> slot.computeDisplayName(formatter)
+        }
+
+    private fun computeTopLabel(viewer: Player, column: Int): Component =
+        when (column) {
+            0 -> {
+                val serverName = viewer.currentServer.map { it.serverInfo.name }.orElse("?")
+                Component.empty()
+                    .append(serverLabel)
+                    .append(Component.text(serverName, NamedTextColor.GREEN))
+            }
+            1 -> Component.empty()
+                .append(pingLabel)
+                .append(Component.text("${viewer.ping}ms", NamedTextColor.GREEN))
+            else -> formatter.emptyDisplay()
+        }
+
+    private fun computeBottomLabel(viewer: Player, column: Int, ctx: ViewerContext): Component =
+        when (column) {
+            0 -> ctx.greeting
+            1 -> ctx.time
+            2 -> {
+                val player = state.get(viewer.uniqueId)
+                val minutes = player?.let { Duration.between(it.loginAt, ctx.now).toMinutes() } ?: 0L
+                Component.empty()
+                    .append(connectTimeLabel)
+                    .append(Component.text("${minutes}分", NamedTextColor.GREEN))
+            }
+            else -> formatter.emptyDisplay()
+        }
+
+    private fun formatTime(time: LocalTime): String {
+        val ampm = if (time.hour < 12) "AM" else "PM"
+        return "%s %02d:%02d".format(ampm, time.hour, time.minute)
+    }
+
+    private fun applySlot(tabList: TabList, slot: TabSlot, displayName: Component, listOrder: Int) {
         val existing = tabList.getEntry(slot.uuid)
 
         if (existing.isPresent) {
