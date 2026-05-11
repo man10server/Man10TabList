@@ -47,22 +47,25 @@ class TabListRenderer(
     private var cachedFooterPlayerCount: Int = -1
 
     fun renderAll() {
-        val composed = state.composedSlots()
-        val desired = collectIds(composed)
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         for (viewer in server.allPlayers) {
+            val composed = state.composedSlots(currentServerOf(viewer))
+            val desired = collectIds(composed)
             renderFor(viewer, composed, desired, footer, viewerCtx)
         }
     }
 
     fun renderFor(viewer: Player) {
-        val composed = state.composedSlots()
+        val composed = state.composedSlots(currentServerOf(viewer))
         val desired = collectIds(composed)
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         renderFor(viewer, composed, desired, footer, viewerCtx)
     }
+
+    private fun currentServerOf(viewer: Player): String? =
+        viewer.currentServer.map { it.serverInfo.name }.orElse(null)
 
     private data class ViewerContext(
         val now: Instant,

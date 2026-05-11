@@ -42,7 +42,7 @@ class TabListState(
 
     fun playerCount(): Int = players.size
 
-    fun composedSlots(): List<TabSlot> {
+    fun composedSlots(uncappedServer: String? = null): List<TabSlot> {
         val grouped = sortedMapOf<String, MutableList<PlayerEntry>>()
         for (entry in players.values) {
             grouped.getOrPut(entry.serverName) { ArrayList() }.add(entry)
@@ -50,9 +50,18 @@ class TabListState(
         serverHeaders.keys.removeAll { it !in grouped.keys }
         overflows.keys.removeAll { it !in grouped.keys }
 
+        val groupOrder = if (uncappedServer != null && grouped.containsKey(uncappedServer)) {
+            val ordered = ArrayList<Map.Entry<String, MutableList<PlayerEntry>>>(grouped.size)
+            for (e in grouped.entries) if (e.key == uncappedServer) ordered.add(e)
+            for (e in grouped.entries) if (e.key != uncappedServer) ordered.add(e)
+            ordered
+        } else {
+            grouped.entries
+        }
+
         val content = ArrayList<TabSlot>(TOTAL_CONTENT)
 
-        for ((server, list) in grouped) {
+        for ((server, list) in groupOrder) {
             if (content.size >= TOTAL_CONTENT) break
 
             val nextRowStart = ((content.size + NUM_COLUMNS - 1) / NUM_COLUMNS) * NUM_COLUMNS
@@ -68,13 +77,13 @@ class TabListState(
             header.count = list.size
             list.sortBy { it.username }
 
-            val needsOverflow = list.size > MAX_PLAYERS_PER_SERVER
+            val isUncapped = server == uncappedServer
+            val needsOverflow = !isUncapped && list.size > MAX_PLAYERS_PER_SERVER
             val playersToAddIdeal = if (needsOverflow) MAX_PLAYERS_PER_SERVER - 1 else list.size
             val totalNeededIdeal = 1 + playersToAddIdeal + (if (needsOverflow) 1 else 0)
             val totalForServer = minOf(totalNeededIdeal, available)
 
             content.add(header)
-            var addedAfterHeader = 1
 
             val playersToAdd: Int
             val emitOverflow: Boolean
@@ -88,13 +97,11 @@ class TabListState(
 
             for (i in 0 until playersToAdd) {
                 content.add(list[i])
-                addedAfterHeader++
             }
             if (emitOverflow) {
                 val overflow = overflows.computeIfAbsent(server) { OverflowSlot(it) }
                 overflow.remaining = list.size - playersToAdd
                 content.add(overflow)
-                addedAfterHeader++
             }
         }
 
