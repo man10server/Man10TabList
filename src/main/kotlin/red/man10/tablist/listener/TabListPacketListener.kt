@@ -16,10 +16,8 @@ class TabListPacketListener(
 
         val wrapper = WrapperPlayServerPlayerInfoUpdate(event)
         val actions = wrapper.actions
-        val touchesDisplayName =
-            WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_DISPLAY_NAME in actions ||
-                WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER in actions
-        if (!touchesDisplayName) return
+        if (WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER in actions) return
+        if (WrapperPlayServerPlayerInfoUpdate.Action.UPDATE_DISPLAY_NAME !in actions) return
 
         for (entry in wrapper.entries) {
             val expected = state.displayNameFor(entry.profileId) ?: continue
