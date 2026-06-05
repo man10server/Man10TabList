@@ -48,7 +48,7 @@ class Man10TabList @Inject constructor(
         val newState = TabListState(formatter)
         this.state = newState
 
-        val renderer = TabListRenderer(server, newState, formatter)
+        val renderer = TabListRenderer(server, newState, formatter, this)
         val listener = PlayerLifecycleListener(newState, renderer)
         server.eventManager.register(this, listener)
 

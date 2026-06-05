@@ -20,11 +20,14 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalTime
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class TabListRenderer(
     private val server: ProxyServer,
     private val state: TabListState,
     private val formatter: TabListFormatter,
+    private val plugin: Any,
 ) {
 
     private val grayProfileProperties: List<GameProfile.Property> = listOf(
@@ -45,6 +48,9 @@ class TabListRenderer(
 
     @Volatile
     private var cachedFooterPlayerCount: Int = -1
+
+    // ADD_PLAYER 通過で整形が崩れた viewer の再描画予約 (デバウンス用)。バースト分を 1 回にまとめる。
+    private val pendingRefresh: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
 
     // @Synchronized で render 全体を直列化する。renderAll はスケジューラスレッドと
     // Velocity の login/connect/disconnect イベントの両方から非同期に呼ばれ、
@@ -73,20 +79,29 @@ class TabListRenderer(
         }
     }
 
-    // ADD_PLAYER パケット通過時に listener から呼ばれ、backend が一瞬表示させた displayName を
-    // Velocity 管理値で即時に上書きする。setDisplayName は差分チェックせず無条件でパケットを送る
-    // (Velocity 実装で確認済み) ため、内部状態に関わらず確実に上書きできる。
-    // renderAll と同一モニタで直列化し、同じ viewer.tabList への並行アクセス競合を防ぐ。
+    // 指定 viewer 1 人だけを再描画する (renderAll の単一 viewer 版)。ADD_PLAYER 通過後の整形戻しに使う。
+    // renderAll と同一モニタで直列化する。latency は renderAll が全員分更新するためここでは触らない。
     @Synchronized
-    fun reapplyDisplayName(viewerId: UUID, profileId: UUID, expected: Component) {
-        val viewer = server.getPlayer(viewerId).orElse(null) ?: return
-        viewer.tabList.getEntry(profileId).ifPresent { entry ->
-            // 既に期待値なら何もしない。この経路はプラグイン自身の addEntry が生む ADD_PLAYER にも
-            // 反応するため、差分が無いときに無駄な UPDATE_DISPLAY_NAME を送らないようにする。
-            // backend 由来の ADD_PLAYER では Velocity が processUpsert で displayName を backend 値に
-            // 更新済みのため、ここで差分が出て expected に上書きされる。
-            if (entry.displayNameComponent.orElse(null) != expected) entry.setDisplayName(expected)
-        }
+    fun renderViewer(viewer: Player) {
+        val footer = footerFor(state.playerCount())
+        val viewerCtx = buildViewerContext()
+        val viewerServerName = currentServerOf(viewer)
+        val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
+        val desired = collectIds(composed)
+        renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
+    }
+
+    // backend の ADD_PLAYER は listOrder/listed を運ばないため、通過するとプラグインが組んだ整形が崩れる
+    // (エントリが listOrder=0 で最下段にバラつく・listed=true で退避が戻る)。検知した viewer を次 tick で
+    // 1 回だけ再描画して listOrder/listed/displayName を一括で戻す。サーバー移動時の一斉 ADD_PLAYER は
+    // pendingRefresh で 1 回にまとめ、Netty スレッドはブロックせずスケジューラスレッドで renderViewer を実行する。
+    fun scheduleViewerRefresh(viewerId: UUID) {
+        if (!pendingRefresh.add(viewerId)) return
+        server.scheduler.buildTask(plugin, Runnable {
+            pendingRefresh.remove(viewerId)
+            val viewer = server.getPlayer(viewerId).orElse(null) ?: return@Runnable
+            renderViewer(viewer)
+        }).delay(REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS).schedule()
     }
 
     private fun currentServerOf(viewer: Player): String? =
@@ -269,6 +284,8 @@ class TabListRenderer(
     }
 
     private companion object {
+        const val REFRESH_DEBOUNCE_MS: Long = 50L
+
         const val GRAY_SKIN_VALUE: String =
             "ewogICJ0aW1lc3RhbXAiIDogMTc2NTIxMDEyMTk2OSwKICAicHJvZmlsZUlkIiA6ICI0MDU4NDhjMmJjNTE0ZDhkOThkOTJkMGIwYzhiZDQ0YiIsCiAgInByb2ZpbGVOYW1lIiA6ICJMaWFtX1NhZ2UiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTIyMmFjOTUyYTEyOGRlNmYzYjE4ZjE3YTE0Y2EzMWExYjJmMWFlYzliNGZiMGFjYWRjOTI1NWViYjgyOGE1NyIKICAgIH0KICB9Cn0="
 

@@ -22,15 +22,20 @@ class TabListPacketListener(
         // ADD_PLAYER を含むパケットは絶対に cancel しない。ADD_PLAYER には署名付きチャット用の
         // chat session が同梱されており、これを握りつぶすとクライアントのチャット署名が壊れるため
         // (コミット 4fadf20 の意図)。
-        // ただし通過させると backend の displayName が一瞬クライアントに表示されてしまうので、
-        // 管理対象プレイヤーについては Velocity API 経由で displayName を即時に再適用して上書きし、
-        // ちらつきを最小化する。setDisplayName は差分チェックせず無条件でパケットを送るため確実に上書きできる。
-        // (cancel 専任・field patch 禁止の方針は維持: パケットは書き換えず Velocity API で上書きする)
+        // ただし ADD_PLAYER は listOrder/listed を運ばないため、通過すると backend がエントリを
+        // listOrder=0・listed=true で(再)追加してプラグインの 4x20 整形を崩す (位置がバラつく・退避が戻る)。
+        // そこで backend 由来の ADD_PLAYER (displayName が管理値と異なる) を検知したら、その viewer を
+        // 次 tick で 1 回だけ再描画して整形を戻す。デバウンスでサーバー移動時の一斉 ADD_PLAYER を 1 回に
+        // まとめる。(cancel 専任・field patch 禁止の方針は維持: パケットは書き換えず Velocity API で戻す)
         if (WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER in actions) {
             val viewerId = event.user.uuid ?: return
             for (entry in wrapper.entries) {
                 val expected = state.displayNameFor(entry.profileId) ?: continue
-                renderer.reapplyDisplayName(viewerId, entry.profileId, expected)
+                // プラグイン自身の addEntry (displayName=expected) には反応しないのでループしない。
+                if (entry.displayName != expected) {
+                    renderer.scheduleViewerRefresh(viewerId)
+                    return
+                }
             }
             return
         }
