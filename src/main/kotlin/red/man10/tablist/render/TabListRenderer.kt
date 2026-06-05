@@ -66,9 +66,10 @@ class TabListRenderer(
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         for (viewer in players) {
-            val composed = state.composedSlots(currentServerOf(viewer))
+            val viewerServerName = currentServerOf(viewer)
+            val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
             val desired = collectIds(composed)
-            renderFor(viewer, composed, desired, footer, viewerCtx)
+            renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
         }
     }
 
@@ -145,6 +146,7 @@ class TabListRenderer(
         desired: Set<UUID>,
         footer: Component,
         ctx: ViewerContext,
+        viewerServerName: String?,
     ) {
         val tabList = viewer.tabList
 
@@ -157,7 +159,17 @@ class TabListRenderer(
         var toRemove: ArrayList<UUID>? = null
         for (existing in tabList.entries) {
             val id = existing.profile.id
-            if (id !in desired) {
+            if (id in desired) continue
+            val player = state.get(id)
+            if (player != null && player.serverName == viewerServerName) {
+                // viewer と同じサーバーの実プレイヤーで表示枠から外れた人。removeEntry すると player info が
+                // 消えてスキン (Steve 化) と chat session (チャット検証エラー) が壊れるため、listed=false で
+                // player info だけ残しタブ非表示にする (バニラの 80 人超と同じ挙動)。setListed は無条件送信
+                // なので差分時のみ呼ぶ。
+                if (existing.isListed) existing.setListed(false)
+            } else {
+                // 他サーバーの実プレイヤー (viewer のクライアントに実体が無い) や不要になった偽エントリは
+                // player info を残す意味が無いので削除する。
                 if (toRemove == null) toRemove = ArrayList()
                 toRemove.add(id)
             }
@@ -224,6 +236,9 @@ class TabListRenderer(
             val tle = existing.get()
             tle.setDisplayName(displayName)
             tle.setListOrder(listOrder)
+            // 表示枠に入ったエントリは listed=true に戻す (前 render で listed=false 退避された自サーバー
+            // プレイヤーの再表示など)。setListed は無条件送信なので差分時のみ呼ぶ。
+            if (!tle.isListed) tle.setListed(true)
             if (slot is PlayerEntry) {
                 tle.setLatency(slot.latency)
             }
@@ -244,6 +259,7 @@ class TabListRenderer(
             .profile(profile)
             .displayName(displayName)
             .listOrder(listOrder)
+            .listed(true)
 
         if (slot is PlayerEntry) {
             builder.latency(slot.latency)
