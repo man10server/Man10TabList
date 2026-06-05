@@ -89,32 +89,18 @@ class TabListState(
 
             content.add(header)
 
+            // 上限セル数 (自サーバー=MAX_CELLS_FOR_OWN_SERVER / 他=MAX_CELLS_PER_SERVER) を残り枠 available で
+            // 頭打ちし、header + 全員がそれを超えるなら最後の 1 セルを overflow にして必ず "... and X more" を
+            // 出す (枠不足でも黙って切り捨てない)。自サーバーのあふれ分は renderFor で listed=false 退避する。
+            val cap = minOf(if (isUncapped) MAX_CELLS_FOR_OWN_SERVER else MAX_CELLS_PER_SERVER, available)
             val playersToAdd: Int
             val emitOverflow: Boolean
-            if (isUncapped) {
-                // 自サーバーは上限セル数まで表示し、あふれたら overflow を出す。あふれた実プレイヤーは
-                // renderFor 側で listed=false にして player info だけ残す (スキン・chat session 保全)。
-                val cap = minOf(MAX_CELLS_FOR_OWN_SERVER, available)
-                if (list.size + 1 > cap) {
-                    playersToAdd = maxOf(0, cap - 2)
-                    emitOverflow = true
-                } else {
-                    playersToAdd = list.size
-                    emitOverflow = false
-                }
+            if (list.size + 1 > cap) {
+                playersToAdd = maxOf(0, cap - 2)
+                emitOverflow = true
             } else {
-                // 他サーバーは 4 行 (MAX_CELLS_PER_SERVER) までに収め、あふれは overflow でカウントのみ。
-                val needsOverflow = list.size > MAX_PLAYERS_PER_SERVER
-                val playersToAddIdeal = if (needsOverflow) MAX_PLAYERS_PER_SERVER - 1 else list.size
-                val totalNeededIdeal = 1 + playersToAddIdeal + (if (needsOverflow) 1 else 0)
-                val totalForServer = minOf(totalNeededIdeal, available)
-                if (needsOverflow && totalForServer >= MAX_CELLS_PER_SERVER) {
-                    playersToAdd = MAX_PLAYERS_PER_SERVER - 1
-                    emitOverflow = true
-                } else {
-                    playersToAdd = totalForServer - 1
-                    emitOverflow = false
-                }
+                playersToAdd = list.size
+                emitOverflow = false
             }
 
             for (i in 0 until playersToAdd) {
@@ -152,7 +138,6 @@ class TabListState(
         const val TOTAL_ENTRIES: Int = NUM_COLUMNS * ROWS_PER_COLUMN
         const val MAX_ROWS_PER_SERVER: Int = 4
         const val MAX_CELLS_PER_SERVER: Int = MAX_ROWS_PER_SERVER * NUM_COLUMNS
-        const val MAX_PLAYERS_PER_SERVER: Int = MAX_CELLS_PER_SERVER - 1
 
         // 自サーバー (uncapped) に割り当てる上限。これを超えた分は overflow + listed=false 退避。
         const val MAX_ROWS_FOR_OWN_SERVER: Int = 12
