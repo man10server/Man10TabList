@@ -46,22 +46,46 @@ class TabListRenderer(
     @Volatile
     private var cachedFooterPlayerCount: Int = -1
 
+    // @Synchronized で render 全体を直列化する。renderAll はスケジューラスレッドと
+    // Velocity の login/connect/disconnect イベントの両方から非同期に呼ばれ、
+    // 共有インスタンス (ServerGroupHeader.count / OverflowSlot.remaining) の書き換えや
+    // 同一 viewer.tabList への add/remove が競合しうるため。
+    @Synchronized
     fun renderAll() {
+        // server.allPlayers は呼ぶたびに新規コレクションを確保するため 1 度だけ取得して使い回す
+        // (latency 更新ループと描画ループで同一スナップショットを共有し、確保を 1 回に抑える)。
+        val players = server.allPlayers
+
+        // 各プレイヤーの latency を Velocity の Player.getPing() から state へ反映する。
+        // applySlot が PlayerEntry.latency をそのまま送るため、ここで更新しないと ping バーが 0 のままになる。
+        for (p in players) {
+            // ping は未測定時 -1 がありうるので負値は 0 にクランプする。
+            state.updateLatency(p.uniqueId, maxOf(0, p.ping.toInt()))
+        }
+
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
-        for (viewer in server.allPlayers) {
+        for (viewer in players) {
             val composed = state.composedSlots(currentServerOf(viewer))
             val desired = collectIds(composed)
             renderFor(viewer, composed, desired, footer, viewerCtx)
         }
     }
 
-    fun renderFor(viewer: Player) {
-        val composed = state.composedSlots(currentServerOf(viewer))
-        val desired = collectIds(composed)
-        val footer = footerFor(state.playerCount())
-        val viewerCtx = buildViewerContext()
-        renderFor(viewer, composed, desired, footer, viewerCtx)
+    // ADD_PLAYER パケット通過時に listener から呼ばれ、backend が一瞬表示させた displayName を
+    // Velocity 管理値で即時に上書きする。setDisplayName は差分チェックせず無条件でパケットを送る
+    // (Velocity 実装で確認済み) ため、内部状態に関わらず確実に上書きできる。
+    // renderAll と同一モニタで直列化し、同じ viewer.tabList への並行アクセス競合を防ぐ。
+    @Synchronized
+    fun reapplyDisplayName(viewerId: UUID, profileId: UUID, expected: Component) {
+        val viewer = server.getPlayer(viewerId).orElse(null) ?: return
+        viewer.tabList.getEntry(profileId).ifPresent { entry ->
+            // 既に期待値なら何もしない。この経路はプラグイン自身の addEntry が生む ADD_PLAYER にも
+            // 反応するため、差分が無いときに無駄な UPDATE_DISPLAY_NAME を送らないようにする。
+            // backend 由来の ADD_PLAYER では Velocity が processUpsert で displayName を backend 値に
+            // 更新済みのため、ここで差分が出て expected に上書きされる。
+            if (entry.displayNameComponent.orElse(null) != expected) entry.setDisplayName(expected)
+        }
     }
 
     private fun currentServerOf(viewer: Player): String? =

@@ -52,7 +52,7 @@ class Man10TabList @Inject constructor(
         val listener = PlayerLifecycleListener(newState, renderer)
         server.eventManager.register(this, listener)
 
-        val newPacketListener = TabListPacketListener(newState)
+        val newPacketListener = TabListPacketListener(newState, renderer)
         this.packetListener = newPacketListener
         PacketEvents.getAPI().eventManager.registerListener(newPacketListener)
 
