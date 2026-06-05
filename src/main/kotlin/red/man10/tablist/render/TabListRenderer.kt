@@ -20,11 +20,14 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalTime
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class TabListRenderer(
     private val server: ProxyServer,
     private val state: TabListState,
     private val formatter: TabListFormatter,
+    private val plugin: Any,
 ) {
 
     private val grayProfileProperties: List<GameProfile.Property> = listOf(
@@ -46,22 +49,59 @@ class TabListRenderer(
     @Volatile
     private var cachedFooterPlayerCount: Int = -1
 
+    // ADD_PLAYER 通過で整形が崩れた viewer の再描画予約 (デバウンス用)。バースト分を 1 回にまとめる。
+    private val pendingRefresh: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+
+    // @Synchronized で render 全体を直列化する。renderAll はスケジューラスレッドと
+    // Velocity の login/connect/disconnect イベントの両方から非同期に呼ばれ、
+    // 共有インスタンス (ServerGroupHeader.count / OverflowSlot.remaining) の書き換えや
+    // 同一 viewer.tabList への add/remove が競合しうるため。
+    @Synchronized
     fun renderAll() {
+        // server.allPlayers は呼ぶたびに新規コレクションを確保するため 1 度だけ取得して使い回す
+        // (latency 更新ループと描画ループで同一スナップショットを共有し、確保を 1 回に抑える)。
+        val players = server.allPlayers
+
+        // 各プレイヤーの latency を Velocity の Player.getPing() から state へ反映する。
+        // applySlot が PlayerEntry.latency をそのまま送るため、ここで更新しないと ping バーが 0 のままになる。
+        for (p in players) {
+            // ping は未測定時 -1 がありうるので負値は 0 にクランプする。
+            state.updateLatency(p.uniqueId, maxOf(0, p.ping.toInt()))
+        }
+
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
-        for (viewer in server.allPlayers) {
-            val composed = state.composedSlots(currentServerOf(viewer))
+        for (viewer in players) {
+            val viewerServerName = currentServerOf(viewer)
+            val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
             val desired = collectIds(composed)
-            renderFor(viewer, composed, desired, footer, viewerCtx)
+            renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
         }
     }
 
-    fun renderFor(viewer: Player) {
-        val composed = state.composedSlots(currentServerOf(viewer))
-        val desired = collectIds(composed)
+    // 指定 viewer 1 人だけを再描画する (renderAll の単一 viewer 版)。ADD_PLAYER 通過後の整形戻しに使う。
+    // renderAll と同一モニタで直列化する。latency は renderAll が全員分更新するためここでは触らない。
+    @Synchronized
+    fun renderViewer(viewer: Player) {
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
-        renderFor(viewer, composed, desired, footer, viewerCtx)
+        val viewerServerName = currentServerOf(viewer)
+        val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
+        val desired = collectIds(composed)
+        renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
+    }
+
+    // backend の ADD_PLAYER は listOrder/listed を運ばないため、通過するとプラグインが組んだ整形が崩れる
+    // (エントリが listOrder=0 で最下段にバラつく・listed=true で退避が戻る)。検知した viewer を次 tick で
+    // 1 回だけ再描画して listOrder/listed/displayName を一括で戻す。サーバー移動時の一斉 ADD_PLAYER は
+    // pendingRefresh で 1 回にまとめ、Netty スレッドはブロックせずスケジューラスレッドで renderViewer を実行する。
+    fun scheduleViewerRefresh(viewerId: UUID) {
+        if (!pendingRefresh.add(viewerId)) return
+        server.scheduler.buildTask(plugin, Runnable {
+            pendingRefresh.remove(viewerId)
+            val viewer = server.getPlayer(viewerId).orElse(null) ?: return@Runnable
+            renderViewer(viewer)
+        }).delay(REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS).schedule()
     }
 
     private fun currentServerOf(viewer: Player): String? =
@@ -121,6 +161,7 @@ class TabListRenderer(
         desired: Set<UUID>,
         footer: Component,
         ctx: ViewerContext,
+        viewerServerName: String?,
     ) {
         val tabList = viewer.tabList
 
@@ -133,7 +174,17 @@ class TabListRenderer(
         var toRemove: ArrayList<UUID>? = null
         for (existing in tabList.entries) {
             val id = existing.profile.id
-            if (id !in desired) {
+            if (id in desired) continue
+            val player = state.get(id)
+            if (player != null && player.serverName == viewerServerName) {
+                // viewer と同じサーバーの実プレイヤーで表示枠から外れた人。removeEntry すると player info が
+                // 消えてスキン (Steve 化) と chat session (チャット検証エラー) が壊れるため、listed=false で
+                // player info だけ残しタブ非表示にする (バニラの 80 人超と同じ挙動)。setListed は無条件送信
+                // なので差分時のみ呼ぶ。
+                if (existing.isListed) existing.setListed(false)
+            } else {
+                // 他サーバーの実プレイヤー (viewer のクライアントに実体が無い) や不要になった偽エントリは
+                // player info を残す意味が無いので削除する。
                 if (toRemove == null) toRemove = ArrayList()
                 toRemove.add(id)
             }
@@ -200,6 +251,9 @@ class TabListRenderer(
             val tle = existing.get()
             tle.setDisplayName(displayName)
             tle.setListOrder(listOrder)
+            // 表示枠に入ったエントリは listed=true に戻す (前 render で listed=false 退避された自サーバー
+            // プレイヤーの再表示など)。setListed は無条件送信なので差分時のみ呼ぶ。
+            if (!tle.isListed) tle.setListed(true)
             if (slot is PlayerEntry) {
                 tle.setLatency(slot.latency)
             }
@@ -220,6 +274,7 @@ class TabListRenderer(
             .profile(profile)
             .displayName(displayName)
             .listOrder(listOrder)
+            .listed(true)
 
         if (slot is PlayerEntry) {
             builder.latency(slot.latency)
@@ -229,6 +284,8 @@ class TabListRenderer(
     }
 
     private companion object {
+        const val REFRESH_DEBOUNCE_MS: Long = 50L
+
         const val GRAY_SKIN_VALUE: String =
             "ewogICJ0aW1lc3RhbXAiIDogMTc2NTIxMDEyMTk2OSwKICAicHJvZmlsZUlkIiA6ICI0MDU4NDhjMmJjNTE0ZDhkOThkOTJkMGIwYzhiZDQ0YiIsCiAgInByb2ZpbGVOYW1lIiA6ICJMaWFtX1NhZ2UiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTIyMmFjOTUyYTEyOGRlNmYzYjE4ZjE3YTE0Y2EzMWExYjJmMWFlYzliNGZiMGFjYWRjOTI1NWViYjgyOGE1NyIKICAgIH0KICB9Cn0="
 
