@@ -4,17 +4,59 @@ import com.github.retrooper.packetevents.event.PacketListenerAbstract
 import com.github.retrooper.packetevents.event.PacketListenerPriority
 import com.github.retrooper.packetevents.event.PacketSendEvent
 import com.github.retrooper.packetevents.protocol.packettype.PacketType
+import com.github.retrooper.packetevents.protocol.player.GameMode
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerChangeGameState
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerJoinGame
 import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerPlayerInfoUpdate
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerRespawn
 import red.man10.tablist.render.TabListRenderer
+import red.man10.tablist.state.SpectatorTracker
+import red.man10.tablist.state.SpectatorTracker.Transition
 import red.man10.tablist.state.TabListState
 
 class TabListPacketListener(
     private val state: TabListState,
     private val renderer: TabListRenderer,
+    private val spectatorTracker: SpectatorTracker,
 ) : PacketListenerAbstract(PacketListenerPriority.NORMAL) {
 
     override fun onPacketSend(event: PacketSendEvent) {
-        if (event.packetType != PacketType.Play.Server.PLAYER_INFO_UPDATE) return
+        when (event.packetType) {
+            PacketType.Play.Server.JOIN_GAME -> {
+                val viewerId = event.user.uuid ?: return
+                val wrapper = WrapperPlayServerJoinGame(event)
+                handleGameModeChange(viewerId, wrapper.gameMode == GameMode.SPECTATOR)
+                return
+            }
+            PacketType.Play.Server.RESPAWN -> {
+                val viewerId = event.user.uuid ?: return
+                val wrapper = WrapperPlayServerRespawn(event)
+                handleGameModeChange(viewerId, wrapper.gameMode == GameMode.SPECTATOR)
+                return
+            }
+            PacketType.Play.Server.CHANGE_GAME_STATE -> {
+                val viewerId = event.user.uuid ?: return
+                val wrapper = WrapperPlayServerChangeGameState(event)
+                if (wrapper.reason != WrapperPlayServerChangeGameState.Reason.CHANGE_GAME_MODE) return
+                val gameMode = GameMode.getById(wrapper.value.toInt())
+                handleGameModeChange(viewerId, gameMode == GameMode.SPECTATOR)
+                return
+            }
+            PacketType.Play.Server.PLAYER_INFO_UPDATE -> handlePlayerInfoUpdate(event)
+        }
+    }
+
+    private fun handleGameModeChange(viewerId: java.util.UUID, isSpectator: Boolean) {
+        when (spectatorTracker.update(viewerId, isSpectator)) {
+            Transition.ENTERED -> renderer.scheduleViewerRestore(viewerId)
+            Transition.LEFT -> renderer.scheduleViewerRefresh(viewerId)
+            Transition.UNCHANGED -> Unit
+        }
+    }
+
+    private fun handlePlayerInfoUpdate(event: PacketSendEvent) {
+        val viewerId = event.user.uuid ?: return
+        if (spectatorTracker.isSpectator(viewerId)) return
 
         val wrapper = WrapperPlayServerPlayerInfoUpdate(event)
         val actions = wrapper.actions
@@ -28,7 +70,6 @@ class TabListPacketListener(
         // 次 tick で 1 回だけ再描画して整形を戻す。デバウンスでサーバー移動時の一斉 ADD_PLAYER を 1 回に
         // まとめる。(cancel 専任・field patch 禁止の方針は維持: パケットは書き換えず Velocity API で戻す)
         if (WrapperPlayServerPlayerInfoUpdate.Action.ADD_PLAYER in actions) {
-            val viewerId = event.user.uuid ?: return
             for (entry in wrapper.entries) {
                 val expected = state.displayNameFor(entry.profileId) ?: continue
                 // プラグイン自身の addEntry (displayName=expected) には反応しないのでループしない。
