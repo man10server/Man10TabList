@@ -11,6 +11,8 @@ import com.velocitypowered.api.proxy.ProxyServer
 import com.velocitypowered.api.scheduler.ScheduledTask
 import io.github.retrooper.packetevents.velocity.factory.VelocityPacketEventsBuilder
 import org.slf4j.Logger
+import red.man10.tablist.command.TabListCommand
+import red.man10.tablist.config.TabListConfig
 import red.man10.tablist.listener.PlayerLifecycleListener
 import red.man10.tablist.listener.TabListPacketListener
 import red.man10.tablist.render.TabListFormatter
@@ -48,6 +50,8 @@ class Man10TabList @Inject constructor(
 
         val formatter = TabListFormatter()
         val newState = TabListState(formatter)
+        val config = TabListConfig.load(dataDirectory)
+        newState.privateServers = config.privateServers
         val newSpectatorTracker = SpectatorTracker()
         this.state = newState
         this.spectatorTracker = newSpectatorTracker
@@ -55,6 +59,13 @@ class Man10TabList @Inject constructor(
         val renderer = TabListRenderer(server, newState, formatter, newSpectatorTracker, this)
         val listener = PlayerLifecycleListener(newState, renderer, newSpectatorTracker)
         server.eventManager.register(this, listener)
+
+        server.commandManager.register(
+            server.commandManager.metaBuilder("man10tablist")
+                .plugin(pluginContainer)
+                .build(),
+            TabListCommand(dataDirectory, newState, renderer),
+        )
 
         val newPacketListener = TabListPacketListener(newState, renderer, newSpectatorTracker)
         this.packetListener = newPacketListener
@@ -85,6 +96,7 @@ class Man10TabList @Inject constructor(
         }
         packetListener = null
 
+        server.commandManager.unregister("man10tablist")
         server.eventManager.unregisterListeners(this)
         spectatorTracker?.clear()
         spectatorTracker = null
