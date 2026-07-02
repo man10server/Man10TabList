@@ -45,10 +45,13 @@ class TabListState(
 
     fun playerCount(): Int = players.size
 
-    fun composedSlots(uncappedServer: String? = null, viewerId: UUID? = null): List<TabSlot> {
+    fun composedSlots(
+        uncappedServer: String? = null,
+        viewerId: UUID? = null,
+        bypassPrivate: Boolean = false,
+    ): List<TabSlot> {
         val grouped = sortedMapOf<String, MutableList<PlayerEntry>>()
         for (entry in players.values) {
-            if (entry.serverName in privateServers && entry.serverName != uncappedServer) continue
             grouped.getOrPut(entry.serverName) { ArrayList() }.add(entry)
         }
         serverHeaders.keys.removeAll { it !in grouped.keys }
@@ -66,6 +69,7 @@ class TabListState(
         val content = ArrayList<TabSlot>(TOTAL_CONTENT)
 
         for ((server, list) in groupOrder) {
+            if (!bypassPrivate && server in privateServers && server != uncappedServer) continue
             if (content.size >= TOTAL_CONTENT) break
 
             val nextRowStart = ((content.size + NUM_COLUMNS - 1) / NUM_COLUMNS) * NUM_COLUMNS
