@@ -9,6 +9,9 @@ class TabListState(
     private val formatter: TabListFormatter,
 ) {
 
+    @Volatile
+    var privateServers: Set<String> = emptySet()
+
     private val players = ConcurrentHashMap<UUID, PlayerEntry>()
     private val serverHeaders = ConcurrentHashMap<String, ServerGroupHeader>()
     private val overflows = ConcurrentHashMap<String, OverflowSlot>()
@@ -45,6 +48,7 @@ class TabListState(
     fun composedSlots(uncappedServer: String? = null, viewerId: UUID? = null): List<TabSlot> {
         val grouped = sortedMapOf<String, MutableList<PlayerEntry>>()
         for (entry in players.values) {
+            if (entry.serverName in privateServers && entry.serverName != uncappedServer) continue
             grouped.getOrPut(entry.serverName) { ArrayList() }.add(entry)
         }
         serverHeaders.keys.removeAll { it !in grouped.keys }
