@@ -13,6 +13,7 @@ import red.man10.tablist.state.OverflowSlot
 import red.man10.tablist.state.PaddingSlot
 import red.man10.tablist.state.PlayerEntry
 import red.man10.tablist.state.ServerGroupHeader
+import red.man10.tablist.state.SpectatorTracker
 import red.man10.tablist.state.TabListState
 import red.man10.tablist.state.TabSlot
 import red.man10.tablist.state.TopLabelSlot
@@ -27,6 +28,7 @@ class TabListRenderer(
     private val server: ProxyServer,
     private val state: TabListState,
     private val formatter: TabListFormatter,
+    private val spectatorTracker: SpectatorTracker,
     private val plugin: Any,
 ) {
 
@@ -52,6 +54,9 @@ class TabListRenderer(
     // ADD_PLAYER 通過で整形が崩れた viewer の再描画予約 (デバウンス用)。バースト分を 1 回にまとめる。
     private val pendingRefresh: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
 
+    // スペクテイター突入時のバニラ復元予約 (デバウンス用)。
+    private val pendingRestore: MutableSet<UUID> = ConcurrentHashMap.newKeySet()
+
     // @Synchronized で render 全体を直列化する。renderAll はスケジューラスレッドと
     // Velocity の login/connect/disconnect イベントの両方から非同期に呼ばれ、
     // 共有インスタンス (ServerGroupHeader.count / OverflowSlot.remaining) の書き換えや
@@ -72,6 +77,7 @@ class TabListRenderer(
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         for (viewer in players) {
+            if (spectatorTracker.isSpectator(viewer.uniqueId)) continue
             val viewerServerName = currentServerOf(viewer)
             val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
             val desired = collectIds(composed)
@@ -83,6 +89,7 @@ class TabListRenderer(
     // renderAll と同一モニタで直列化する。latency は renderAll が全員分更新するためここでは触らない。
     @Synchronized
     fun renderViewer(viewer: Player) {
+        if (spectatorTracker.isSpectator(viewer.uniqueId)) return
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         val viewerServerName = currentServerOf(viewer)
@@ -102,6 +109,44 @@ class TabListRenderer(
             val viewer = server.getPlayer(viewerId).orElse(null) ?: return@Runnable
             renderViewer(viewer)
         }).delay(REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS).schedule()
+    }
+
+    // スペクテイター突入時に偽エントリを除去し、同サーバーの実プレイヤーをバニラ表示へ戻す。
+    // Netty スレッドから呼ばれるためスケジューラ経由で restoreVanilla を実行する。
+    fun scheduleViewerRestore(viewerId: UUID) {
+        if (!pendingRestore.add(viewerId)) return
+        server.scheduler.buildTask(plugin, Runnable {
+            pendingRestore.remove(viewerId)
+            val viewer = server.getPlayer(viewerId).orElse(null) ?: return@Runnable
+            restoreVanilla(viewer)
+        }).delay(REFRESH_DEBOUNCE_MS, TimeUnit.MILLISECONDS).schedule()
+    }
+
+    @Synchronized
+    fun restoreVanilla(viewer: Player) {
+        if (!spectatorTracker.isSpectator(viewer.uniqueId)) return
+
+        val tabList = viewer.tabList
+        val viewerServerName = currentServerOf(viewer)
+        val toRemove = ArrayList<UUID>()
+
+        for (existing in tabList.entries) {
+            val id = existing.profile.id
+            val player = state.get(id)
+            if (player != null && player.serverName == viewerServerName) {
+                if (!existing.isListed) existing.setListed(true)
+                if (existing.listOrder != 0) existing.setListOrder(0)
+                if (existing.displayNameComponent.isPresent) existing.setDisplayName(null)
+            } else {
+                toRemove.add(id)
+            }
+        }
+
+        for (id in toRemove) {
+            tabList.removeEntry(id)
+        }
+
+        viewer.sendPlayerListHeaderAndFooter(Component.empty(), Component.empty())
     }
 
     private fun currentServerOf(viewer: Player): String? =

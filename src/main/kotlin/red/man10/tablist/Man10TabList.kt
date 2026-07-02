@@ -15,6 +15,7 @@ import red.man10.tablist.listener.PlayerLifecycleListener
 import red.man10.tablist.listener.TabListPacketListener
 import red.man10.tablist.render.TabListFormatter
 import red.man10.tablist.render.TabListRenderer
+import red.man10.tablist.state.SpectatorTracker
 import red.man10.tablist.state.TabListState
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
@@ -33,6 +34,7 @@ class Man10TabList @Inject constructor(
 ) {
 
     private var state: TabListState? = null
+    private var spectatorTracker: SpectatorTracker? = null
     private var packetListener: TabListPacketListener? = null
     private var refreshTask: ScheduledTask? = null
 
@@ -46,13 +48,15 @@ class Man10TabList @Inject constructor(
 
         val formatter = TabListFormatter()
         val newState = TabListState(formatter)
+        val newSpectatorTracker = SpectatorTracker()
         this.state = newState
+        this.spectatorTracker = newSpectatorTracker
 
-        val renderer = TabListRenderer(server, newState, formatter, this)
-        val listener = PlayerLifecycleListener(newState, renderer)
+        val renderer = TabListRenderer(server, newState, formatter, newSpectatorTracker, this)
+        val listener = PlayerLifecycleListener(newState, renderer, newSpectatorTracker)
         server.eventManager.register(this, listener)
 
-        val newPacketListener = TabListPacketListener(newState, renderer)
+        val newPacketListener = TabListPacketListener(newState, renderer, newSpectatorTracker)
         this.packetListener = newPacketListener
         PacketEvents.getAPI().eventManager.registerListener(newPacketListener)
 
@@ -82,6 +86,8 @@ class Man10TabList @Inject constructor(
         packetListener = null
 
         server.eventManager.unregisterListeners(this)
+        spectatorTracker?.clear()
+        spectatorTracker = null
         state?.clear()
         state = null
         logger.info("Man10TabList shut down.")

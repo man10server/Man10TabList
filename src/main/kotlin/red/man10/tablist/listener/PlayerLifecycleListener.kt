@@ -5,11 +5,13 @@ import com.velocitypowered.api.event.connection.DisconnectEvent
 import com.velocitypowered.api.event.connection.PostLoginEvent
 import com.velocitypowered.api.event.player.ServerPostConnectEvent
 import red.man10.tablist.render.TabListRenderer
+import red.man10.tablist.state.SpectatorTracker
 import red.man10.tablist.state.TabListState
 
 class PlayerLifecycleListener(
     private val state: TabListState,
     private val renderer: TabListRenderer,
+    private val spectatorTracker: SpectatorTracker,
 ) {
 
     private companion object {
@@ -36,6 +38,7 @@ class PlayerLifecycleListener(
     @Subscribe
     fun onDisconnect(event: DisconnectEvent) {
         val player = event.player
+        spectatorTracker.remove(player.uniqueId)
         state.remove(player.uniqueId)
         renderer.renderAll()
     }
