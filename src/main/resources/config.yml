@@ -1,3 +1,4 @@
 # 他のサーバーにプレイヤー一覧を共有しないサーバー名（velocity.toml のサーバー名と一致させる）
 # ここに書いたサーバーのプレイヤーは、同じサーバーにいる人にだけ表示されます。
+# man10tablist.bypass-private 権限を持つプレイヤーは、private-servers の制限を無視して全サーバーのプレイヤーを表示します。
 private-servers: []

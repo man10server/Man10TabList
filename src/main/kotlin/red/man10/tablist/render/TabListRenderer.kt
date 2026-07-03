@@ -79,7 +79,8 @@ class TabListRenderer(
         for (viewer in players) {
             if (spectatorTracker.isSpectator(viewer.uniqueId)) continue
             val viewerServerName = currentServerOf(viewer)
-            val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
+            val bypassPrivate = viewer.hasPermission(BYPASS_PRIVATE_PERMISSION)
+            val composed = state.composedSlots(viewerServerName, viewer.uniqueId, bypassPrivate)
             val desired = collectIds(composed)
             renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
         }
@@ -93,7 +94,8 @@ class TabListRenderer(
         val footer = footerFor(state.playerCount())
         val viewerCtx = buildViewerContext()
         val viewerServerName = currentServerOf(viewer)
-        val composed = state.composedSlots(viewerServerName, viewer.uniqueId)
+        val bypassPrivate = viewer.hasPermission(BYPASS_PRIVATE_PERMISSION)
+        val composed = state.composedSlots(viewerServerName, viewer.uniqueId, bypassPrivate)
         val desired = collectIds(composed)
         renderFor(viewer, composed, desired, footer, viewerCtx, viewerServerName)
     }
@@ -330,6 +332,7 @@ class TabListRenderer(
 
     private companion object {
         const val REFRESH_DEBOUNCE_MS: Long = 50L
+        const val BYPASS_PRIVATE_PERMISSION: String = "man10tablist.bypass-private"
 
         const val GRAY_SKIN_VALUE: String =
             "ewogICJ0aW1lc3RhbXAiIDogMTc2NTIxMDEyMTk2OSwKICAicHJvZmlsZUlkIiA6ICI0MDU4NDhjMmJjNTE0ZDhkOThkOTJkMGIwYzhiZDQ0YiIsCiAgInByb2ZpbGVOYW1lIiA6ICJMaWFtX1NhZ2UiLAogICJzaWduYXR1cmVSZXF1aXJlZCIgOiB0cnVlLAogICJ0ZXh0dXJlcyIgOiB7CiAgICAiU0tJTiIgOiB7CiAgICAgICJ1cmwiIDogImh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvNTIyMmFjOTUyYTEyOGRlNmYzYjE4ZjE3YTE0Y2EzMWExYjJmMWFlYzliNGZiMGFjYWRjOTI1NWViYjgyOGE1NyIKICAgIH0KICB9Cn0="
